@@ -68,6 +68,8 @@ export const sendOTPController = catchAsync(async (req, res, next) => {
     otp_expiry_time: otp_expiry_time,
   });
 
+  // console.log(new_otp);
+  // console.log("OTP email sent successfully!");
   user.otp = new_otp.toString();
 
   await user.save({ new: true, validateModifiedOnly: true });
@@ -88,9 +90,6 @@ export const sendOTPController = catchAsync(async (req, res, next) => {
   // Send email
 
   await sendEmailService(emailOptions);
-
-  // console.log(new_otp);
-  // console.log("OTP email sent successfully!");
 
   res.status(200).json({
     status: "success",
@@ -184,6 +183,14 @@ export const LoginController = catchAsync(async (req, res, next) => {
     return;
   }
 
+  // check the email is verified or not
+  if (user?.verified == false) {
+    return res.status(400).json({
+      status: "error",
+      message: "Email is Not Verified Please Verify it",
+    });
+  }
+
   const token = signToken(user._id);
   res.status(200).json({
     status: "success",
@@ -222,7 +229,7 @@ export const forgotPasswordController = catchAsync(async (req, res, next) => {
 
   // 3) Send it to user's email
   try {
-    const resetURL = `http://localhost:5173/auth/new-password?token=${resetToken}`;
+    const resetURL = `${process.env.FRONTEND_URL}/auth/new-password?token=${resetToken}`;
     // TODO => Send Email with this Reset URL to user's email address
 
     // console.log(resetToken);
