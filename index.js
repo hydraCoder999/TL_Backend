@@ -14,6 +14,7 @@ import GroupMessage from "./models/GroupMessages.js";
 import connectApolloServer from "./GraphQl/index.js";
 import { startStandaloneServer } from "@apollo/server/standalone";
 import StoryEvents from "./utils/SocketEvents/StoryEvents.js";
+import AudioVideoCall from "./models/audioVideoCall.model.js";
 dotenv.config();
 
 // DEFINE THE PORT
@@ -26,7 +27,7 @@ const server = http.createServer(app);
 // socket Instance
 const io = new Server(server, {
   cors: {
-    origin: process.env.FRONTEND_URL,
+    origin: "*",
   },
 });
 
@@ -714,6 +715,154 @@ io.on("connection", async (socket) => {
   });
 
   //STORY EVENT END
+
+  /**
+   * Call Events
+   */
+
+  socket.on("CREATE_NEW_CALL", async (data, callback) => {
+    try {
+      const { from, to, call_type, signal } = data;
+
+      const users = await User.find({ _id: { $in: [from._id, to._id] } });
+      const from_user = users.find(
+        (user) => user._id.toString() === from._id.toString()
+      );
+      const to_user = users.find(
+        (user) => user._id.toString() === to._id.toString()
+      );
+
+      if (!to_user)
+        return callback({
+          status: false,
+          message: "User not found",
+        });
+
+      const newCall = new AudioVideoCall({
+        callType: call_type,
+        participants: [from_user._id, to_user._id],
+        from: from_user._id,
+        to: to_user._id,
+        status: "Ongoing",
+      });
+
+      await newCall.save();
+
+      io.to(to_user.socket_id).emit("NEW_INCOMMING_CALL", {
+        call_id: newCall._id,
+        from,
+        to,
+        call_type,
+        call_details: newCall,
+        signal,
+      });
+
+      callback({
+        status: true,
+        message: "Calling...",
+        call_id: newCall._id,
+      });
+    } catch (error) {
+      callback({
+        status: false,
+        message: "Error creating call",
+      });
+    }
+  });
+  const updateCallStatus = async (
+    data,
+    status,
+    verdict,
+    eventName,
+    callback
+  ) => {
+    try {
+      const { from, to, call_type } = data;
+      const users = await User.find({ _id: { $in: [from._id, to._id] } });
+      const from_user = users.find(
+        (user) => user._id.toString() === from._id.toString()
+      );
+      const to_user = users.find(
+        (user) => user._id.toString() === to._id.toString()
+      );
+
+      if (!to_user)
+        return callback({
+          status: false,
+          message: "User not found",
+        });
+
+      const call = await AudioVideoCall.findById(data.call_id);
+
+      if (!call)
+        return callback({
+          status: false,
+          message: "Call not found",
+        });
+
+      call.status = status;
+      call.verdict = verdict;
+      if (status === "Ended") {
+        call.endedAt = new Date();
+      }
+      await call.save();
+
+      io.to(to_user.socket_id).emit(eventName, {
+        from,
+        to,
+        call_type,
+        call_details: call,
+        call_id: data?.call_id || null,
+        signal: data?.signal || null,
+      });
+
+      callback({
+        status: true,
+        message: `${eventName} successfully`,
+      });
+    } catch (error) {
+      console.log(error);
+
+      callback({
+        status: false,
+        message: `Error in ${eventName}`,
+      });
+    }
+  };
+
+  socket.on("CALL_DENIED", async (data, callback) => {
+    await updateCallStatus(data, "Ended", "Denied", "CALL_DENIED", callback);
+  });
+
+  socket.on("CALL_ACCEPT", async (data, callback) => {
+    await updateCallStatus(
+      data,
+      "Ongoing",
+      "Accepted",
+      "CALL_ACCEPT",
+      callback
+    );
+  });
+
+  socket.on("BUSY_CALL", async (data, callback) => {
+    await updateCallStatus(data, "Ended", "Busy", "CALL_BUSY", callback);
+  });
+
+  socket.on("MISSED_CALL", async (data, callback) => {
+    await updateCallStatus(data, "Ended", "Missed", "MISSED_CALL", callback);
+  });
+
+  socket.on("CUT_CALL", async (data, callback) => {
+    await updateCallStatus(data, "Ended", "Accepted", "CUT_CALL", callback);
+  });
+  /**
+   * Call Events End
+   */
+
+  /**
+   * WebRTC Events VIDEO CALL END
+   */
+
   socket.on("disconnect", async () => {
     console.log(socket.id + " has disconnected");
     const index = connectUsersIdAndSocketIds.findIndex(
